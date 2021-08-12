@@ -247,11 +247,6 @@ def inject_user(): # 函数名可以随意修改
 
 
 
-
-
-
-
-
 @app.errorhandler(404)
 def page_not_found(e):
     return render_template('404.html') ,404
