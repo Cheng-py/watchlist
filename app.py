@@ -35,18 +35,7 @@ else:
 
 app = Flask(__name__)
 
-movies = [
-{'title': 'My Neighbor Totoro', 'year': '1988'},
-{'title': 'Dead Poets Society', 'year': '1989'},
-{'title': 'A Perfect World', 'year': '1993'},
-{'title': 'Leon', 'year': '1994'},
-{'title': 'Mahjong', 'year': '1996'},
-{'title': 'Swallowtail Butterfly', 'year': '1996'},
-{'title': 'King of Comedy', 'year': '1999'},
-{'title': 'Devils on the Doorstep', 'year': '1999'},
-{'title': 'WALL-E', 'year': '2008'},
-{'title': 'The Pork of Music', 'year': '2012'},
-]
+
 app.config['SQLALCHEMY_DATABASE_URI'] =prefix + os.path.join(app.root_path, 'data.sqlite3')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False # 关闭对模型修改的监控
 app.config["SECRET_KEY"] ="dev"
@@ -54,7 +43,9 @@ app.config["SECRET_KEY"] ="dev"
 db = SQLAlchemy(app)  # 在拓展类实例化前加载配置
 
 
-login_manager = LoginManager(app)
+login_manager = LoginManager()
+login_manager.init_app(app)
+
 
 
 
@@ -86,6 +77,10 @@ class Movie(db.Model):
     title = db.Column(db.String(60))
     year = db.Column(db.String(4))
 
+
+
+
+
 @app.cli.command()
 def forge():  # 执行 flask forge 命令就会把所有虚拟数据添加到数据库里：
     """Generate fake data."""
@@ -114,37 +109,21 @@ def forge():  # 执行 flask forge 命令就会把所有虚拟数据添加到数
 
 
 
-@app.cli.command()
-@click.option('--username',prompt = True, help = "the username used to Login.")
-@click.option("--password",prompt = True , hide_input = True, confirmation_prompt = True, help = " The Password Used to Login.")
-def admin(username, password):
-    """create user"""
-    db.create_all()
-
-    user = User.query.first()
-    if user is not None:
-        click.echo("Updating user...")
-        user.username = username
-        user.set_password(password)
-    else:
-        click.echo("Creating user...")
-        user = User(username = username,name = "Admin")
-        user.set_password(password)
-        db.session.add(user)
-    db.session.commit()
-    click.echo("Done.")
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST': # 判断是否是 POST 请求
+
+        if not current_user.is_authenticated:  # 如果当前用户未认证，返回到主界面
+            return redirect(url_for("index"))
         # 获取表单数据
         title = request.form.get('title') # 传入表单对应输入字段的name 值
         year = request.form.get('year')
-# 验证数据
+    # 验证数据
         if not title or not year or len(year) > 4 or len(title)> 60:
             flash('Invalid input.') # 显示错误提示
             return redirect(url_for('index')) # 重定向回主页
-# 保存表单数据到数据库
+    # 保存表单数据到数据库
         movie = Movie(title=title, year=year) # 创建记录
         db.session.add(movie) # 添加到数据库会话
         db.session.commit() # 提交数据库会话
@@ -155,6 +134,7 @@ def index():
     return render_template('index.html', user=user, movies=movies)
 
 @app.route('/movie/edit/<int:movie_id>', methods=['GET', 'POST'])
+@login_required
 def edit(movie_id):
     movie = Movie.query.get_or_404(movie_id)
 
@@ -175,6 +155,7 @@ def edit(movie_id):
 
 
 @app.route('/movie/delete/<int:movie_id>', methods=['POST'])
+@login_required
 def delete(movie_id):
     movie = Movie.query.get_or_404(movie_id)
     db.session.delete(movie)
@@ -183,7 +164,33 @@ def delete(movie_id):
     return redirect(url_for('index'))
 
 
-# login_manager.login_view = 'login'
+@app.cli.command()
+@click.option('--username',prompt = True, help = "the username used to Login.")
+@click.option("--password",prompt = True , hide_input = True, confirmation_prompt = True, help = " The Password Used to Login.")
+def admin(username, password):
+    """create user"""
+    db.create_all()
+
+    user = User.query.first()
+    if user is not None:
+        click.echo("Updating user...")
+        user.username = username
+        user.set_password(password)
+    else:
+        click.echo("Creating user...")
+        user = User(username = username,name = "Admin")
+        user.set_password(password)
+        db.session.add(user)
+    db.session.commit()
+    click.echo("Done.")
+
+@login_manager.user_loader
+def load_user(user_id): # 创建用户加载回调函数， 接受用户 ID 作为参数
+    user = User.query.get(int(user_id)) # 用 ID 作为 User 模型的主键查询对应的用户
+    return user # 返回用户对象
+
+
+login_manager.login_view = 'login'
 @app.route("/login",methods = ["POST","GET"])
 def login():
     if request.method == "POST":
@@ -214,16 +221,30 @@ def logout():
     return redirect(url_for("index"))
 
 
+@app.route("/settings",methods=["POST","GET"])
+@login_required
+def settings():
+    if request.method == "POST":
+        name = request.form['name']
+        if not name or len(name)>20:
+            flash("Invalid Error")
+            return redirect(url_for("settings"))
+        current_user.name = name
+        # current_user 会返回当前登录用户的数据库记录对象
+        # 等同于下面的用法
+        # user = User.query.first()
+        # user.name = name
+        db.session.commit()
+        flash("Settings Updated")
+        return redirect(url_for('index'))
+    return render_template("settings.html")
+
 @app.context_processor
 def inject_user(): # 函数名可以随意修改
     user = User.query.first()
     return dict(user=user) # 需要返回字典， 等同于return {'user': user}
 
 
-@login_manager.user_loader
-def load_user(user_id): # 创建用户加载回调函数， 接受用户 ID 作为参数
-    user = User.query.get(int(user_id)) # 用 ID 作为 User 模型的主键查询对应的用户
-    return user # 返回用户对象
 
 
 
